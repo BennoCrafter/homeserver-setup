@@ -1,14 +1,18 @@
 #!/usr/bin/env python3
-# desc: Install apps (Homebrew casks from CASK_APPS) and start OrbStack at login
+# desc: Install apps (Homebrew casks/formulas) and start OrbStack at login
 import shutil
 import subprocess
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
-from common import CASK_APPS, ok, step, warn, wait_docker  # noqa: E402
+from common import BREW_FORMULAS, CASK_APPS, ok, step, warn, wait_docker  # noqa: E402
 
 step("Apps")
+
+for app in BREW_FORMULAS:
+    subprocess.run(["brew", "install", app], check=True)
+    ok(f"{app} installed")
 
 for app in CASK_APPS:
     subprocess.run(["brew", "install", "--cask", app], check=True)
