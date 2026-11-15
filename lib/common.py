@@ -21,8 +21,8 @@ BREW_FORMULAS = getattr(config, "BREW_FORMULAS", "").split()
 APPS_DIR = SRV_ROOT / "apps"
 DATA_DIR = SRV_ROOT / "data"
 BIN_DIR = Path("/usr/local/bin")
-AGENT_LABEL = "com.homeserver.srv-up"
-AGENT_PLIST = Path.home() / "Library/LaunchAgents" / f"{AGENT_LABEL}.plist"
+# LaunchAgents call srv by its real path, so they keep working if the /usr/local/bin link goes stale
+SRV_BIN = SETUP_DIR / "bin" / "srv"
 
 os.environ["PATH"] = f"{Path.home()}/.orbstack/bin:/opt/homebrew/bin:/usr/local/bin:" + os.environ.get("PATH", "")
 
@@ -69,6 +69,39 @@ def ensure_sudo():
 
     threading.Thread(target=keepalive, daemon=True).start()
     _sudo_keepalive_started = True
+
+
+def install_agent(name, args, trigger):
+    """(Re)load LaunchAgent com.homeserver.<name> running `srv <args>`; trigger is plist XML (when to run)."""
+    label = f"com.homeserver.{name}"
+    plist = Path.home() / "Library/LaunchAgents" / f"{label}.plist"
+    log = Path.home() / "Library/Logs" / f"{name}.log"
+    plist.parent.mkdir(parents=True, exist_ok=True)
+    log.parent.mkdir(parents=True, exist_ok=True)
+    argv = "".join(f"<string>{a}</string>" for a in [SRV_BIN, *args])
+    plist.write_text(f"""<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>{label}</string>
+  <key>ProgramArguments</key>
+  <array>{argv}</array>
+  {trigger}
+  <key>EnvironmentVariables</key>
+  <dict><key>PATH</key><string>{Path.home()}/.orbstack/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string></dict>
+  <key>StandardOutPath</key><string>{log}</string>
+  <key>StandardErrorPath</key><string>{log}</string>
+</dict>
+</plist>
+""")
+    uid = os.getuid()
+    subprocess.run(["launchctl", "bootout", f"gui/{uid}", str(plist)], capture_output=True)
+    subprocess.run(["launchctl", "bootstrap", f"gui/{uid}", str(plist)], check=True)
+    ok(f"{label} (log: ~/Library/Logs/{name}.log)")
+
+
+def daily_at(hour):
+    return f"<key>StartCalendarInterval</key><dict><key>Hour</key><integer>{hour}</integer><key>Minute</key><integer>0</integer></dict>"
 
 
 def docker_ready():

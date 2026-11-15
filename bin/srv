@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """srv — manage compose apps in srv/apps/<app>, with data in srv/data/<app>"""
+import json
 import os
 import subprocess
 import sys
@@ -14,6 +15,11 @@ SRV_ROOT = Path(getattr(config, "SRV_ROOT", "~/srv")).expanduser()
 TZ = getattr(config, "TZ", "Europe/Berlin")
 APPS_DIR = SRV_ROOT / "apps"
 DATA_DIR = SRV_ROOT / "data"
+BACKUP_DIR = SRV_ROOT / "backups"
+BACKUP_KEEP_DAYS = 14
+# The portal (no Docker access) asks for updates by writing here; see process_requests()
+PORTAL_DATA = DATA_DIR / "portal"
+REQUESTS_DIR = PORTAL_DATA / "requests"
 os.environ["TZ"] = TZ
 os.environ["PATH"] = f"{Path.home()}/.orbstack/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:" + os.environ.get("PATH", "")
 
@@ -28,6 +34,9 @@ USAGE = f"""Usage: srv <command> [app]
   logs    <app>     Follow logs
   new     <app>     Create apps/<app>/compose.yml and data/<app>/
   prune             Remove unused images
+  backup  [app]     Run apps/<app>/backup.sh into {BACKUP_DIR}/<app>, keep {BACKUP_KEEP_DAYS} days
+  process-requests  Update apps the portal asked for (run by a LaunchAgent)
+  auto-update       Update apps with auto-update enabled in the portal (nightly)
   setup   [step..]  Re-run setup steps (e.g. 'srv setup power')
 
 In compose files use ${{DATA}} for the app's data folder and ${{TZ}} for the timezone.
@@ -84,6 +93,63 @@ def for_each(target, *args):
                 print(f"!! {a} failed", file=sys.stderr)
 
 
+def backup(name):
+    script = APPS_DIR / name / "backup.sh"
+    if not script.is_file():
+        return True
+    out = BACKUP_DIR / name
+    out.mkdir(parents=True, exist_ok=True)
+    print(f"── {name}: backup.sh -> {out}")
+    env = {**os.environ, "DATA": str(DATA_DIR / name), "BACKUP": str(out)}
+    if subprocess.run(["/bin/sh", str(script)], cwd=script.parent, env=env).returncode != 0:
+        return False
+    cutoff = time.time() - BACKUP_KEEP_DAYS * 86400
+    for f in out.iterdir():
+        if f.is_file() and f.stat().st_mtime < cutoff:
+            f.unlink()
+    return True
+
+
+def update(name):
+    """Pull and recreate one app, recording the result for the portal to show."""
+    status_file = PORTAL_DATA / "updates.json"
+
+    def record(state):
+        try:
+            status = json.loads(status_file.read_text())
+        except (OSError, ValueError):
+            status = {}
+        status[name] = {"state": state, "at": int(time.time())}
+        tmp = status_file.with_suffix(".tmp")
+        tmp.write_text(json.dumps(status, indent=2))
+        tmp.replace(status_file)
+
+    record("running")
+    good = run(name, "pull") and run(name, "up", "-d", "--remove-orphans")
+    record("ok" if good else "failed")
+    return good
+
+
+def process_requests():
+    # Request files come from the LAN-facing portal: only their names are used, and only if they are a known app
+    known = set(apps())
+    for f in sorted(REQUESTS_DIR.glob("*")) if REQUESTS_DIR.is_dir() else []:
+        f.unlink()
+        if f.name in known:
+            update(f.name)
+        else:
+            print(f"!! ignoring request for unknown app {f.name!r}", file=sys.stderr)
+
+
+def auto_update():
+    try:
+        wanted = json.loads((PORTAL_DATA / "autoupdate.json").read_text())
+    except (OSError, ValueError):
+        return
+    for name in sorted(set(apps()) & set(wanted if isinstance(wanted, list) else [])):
+        update(name)
+
+
 def new_app(name):
     d = APPS_DIR / name
     if d.exists():
@@ -133,6 +199,15 @@ def main(argv):
     elif cmd == "prune":
         wait_docker()
         subprocess.run(["docker", "image", "prune", "-af"])
+    elif cmd == "backup":
+        wait_docker()
+        for a in [arg] if arg else apps():
+            if not backup(a):
+                print(f"!! {a} backup failed", file=sys.stderr)
+    elif cmd == "process-requests":
+        wait_docker(); process_requests()
+    elif cmd == "auto-update":
+        wait_docker(); auto_update()
     elif cmd == "setup":
         os.execv(sys.executable, [sys.executable, str(SETUP_DIR / "setup.py"), *argv[1:]])
     elif cmd == "new":
