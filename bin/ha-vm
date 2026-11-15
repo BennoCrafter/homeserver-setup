@@ -1,0 +1,51 @@
+#!/bin/sh
+# Home Assistant OS VM in UTM, with the Zigbee dongle passed through.
+# Runs from LaunchAgents (steps/87-homeassistant.py): UTM refuses scripting from SSH sessions,
+# and utmctl is refused from LaunchAgents too, so everything goes through osascript.
+#
+#   ha-vm create   create the VM from $IMAGE (skipped if it exists)
+#   ha-vm start    start the VM and attach the dongle (at login)
+set -eu
+VM=homeassistant
+IMAGE="$HOME/srv/vm/haos.qcow2"
+BRIDGE=en0            # Ethernet; bridging over Wi-Fi breaks mDNS/Matter
+DONGLE="Sonoff Zigbee"  # USB product name prefix of the ZBDongle-E
+
+case "${1:-}" in
+create)
+  osascript <<APPLESCRIPT
+tell application "UTM"
+  if exists virtual machine named "$VM" then return
+  make new virtual machine with properties {backend:qemu, configuration:{name:"$VM", architecture:"aarch64", memory:4096, cpu cores:2, drives:{{removable:false, source:POSIX file "$IMAGE"}}, network interfaces:{{mode:bridged, host interface:"$BRIDGE"}}}}
+end tell
+APPLESCRIPT
+  ;;
+start)
+  open -ga UTM
+  sleep 5
+  osascript <<APPLESCRIPT
+tell application "UTM"
+  set vm to virtual machine named "$VM"
+  if status of vm is not started then start vm
+  repeat 60 times
+    if status of vm is started then exit repeat
+    delay 2
+  end repeat
+  delay 10
+  repeat with dev in usb devices
+    if product name of dev starts with "$DONGLE" then
+      try
+        connect dev to vm
+      on error msg
+        log "dongle: " & msg
+      end try
+    end if
+  end repeat
+  return "status: " & (status of vm as text)
+end tell
+APPLESCRIPT
+  ;;
+*)
+  sed -n 2,7p "$0"; exit 1
+  ;;
+esac

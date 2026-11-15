@@ -71,21 +71,21 @@ def ensure_sudo():
     _sudo_keepalive_started = True
 
 
-def install_agent(name, args, trigger):
-    """(Re)load LaunchAgent com.homeserver.<name> running `srv <args>`; trigger is plist XML (when to run)."""
+def install_agent(name, argv, trigger):
+    """(Re)load LaunchAgent com.homeserver.<name> running argv; trigger is plist XML (when to run)."""
     label = f"com.homeserver.{name}"
     plist = Path.home() / "Library/LaunchAgents" / f"{label}.plist"
     log = Path.home() / "Library/Logs" / f"{name}.log"
     plist.parent.mkdir(parents=True, exist_ok=True)
     log.parent.mkdir(parents=True, exist_ok=True)
-    argv = "".join(f"<string>{a}</string>" for a in [SRV_BIN, *args])
+    program = "".join(f"<string>{a}</string>" for a in argv)
     plist.write_text(f"""<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
   <key>Label</key><string>{label}</string>
   <key>ProgramArguments</key>
-  <array>{argv}</array>
+  <array>{program}</array>
   {trigger}
   <key>EnvironmentVariables</key>
   <dict><key>PATH</key><string>{Path.home()}/.orbstack/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string></dict>
