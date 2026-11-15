@@ -24,6 +24,11 @@ start)
   sleep 5
   osascript <<APPLESCRIPT
 tell application "UTM"
+  -- right after launch UTM hasn't loaded its VM list yet
+  repeat 30 times
+    if exists virtual machine named "$VM" then exit repeat
+    delay 2
+  end repeat
   set vm to virtual machine named "$VM"
   if status of vm is not started then start vm
   repeat 60 times
