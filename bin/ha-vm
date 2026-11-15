@@ -1,15 +1,14 @@
 #!/bin/sh
-# Home Assistant OS VM in UTM, with the Zigbee dongle passed through.
+# Home Assistant OS VM in UTM. The Zigbee dongle stays on the Mac (see zigbee-bridge).
 # Runs from LaunchAgents (steps/87-homeassistant.py): UTM refuses scripting from SSH sessions,
 # and utmctl is refused from LaunchAgents too, so everything goes through osascript.
 #
 #   ha-vm create   create the VM from $IMAGE (skipped if it exists)
-#   ha-vm start    start the VM and attach the dongle (at login)
+#   ha-vm start    start the VM (at login)
 set -eu
 VM=homeassistant
 IMAGE="$HOME/srv/vm/haos.qcow2"
 BRIDGE=en0            # Ethernet; bridging over Wi-Fi breaks mDNS/Matter
-DONGLE="Sonoff Zigbee"  # USB product name prefix of the ZBDongle-E
 
 case "${1:-}" in
 create)
@@ -31,13 +30,11 @@ tell application "UTM"
     if status of vm is started then exit repeat
     delay 2
   end repeat
-  delay 10
+  -- UTM grabs the dongle even with USB sharing off; hand it back to macOS for zigbee-bridge
   repeat with dev in usb devices
-    if product name of dev starts with "$DONGLE" then
+    if product name of dev starts with "Sonoff" then
       try
-        connect dev to vm
-      on error msg
-        log "dongle: " & msg
+        disconnect dev
       end try
     end if
   end repeat

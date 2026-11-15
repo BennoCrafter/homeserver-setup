@@ -1,0 +1,11 @@
+#!/bin/sh
+# Serve the Zigbee dongle over TCP to Zigbee2MQTT in the HA VM (serial port tcp://<this Mac>:6638).
+# USB passthrough doesn't work: macOS's DriverKit serial driver keeps hold of the dongle.
+# Run by a KeepAlive LaunchAgent (steps/87-homeassistant.py); socat serves one client and exits, launchd restarts it.
+set -eu
+PORT=6638
+BAUD=230400            # this dongle's EmberZNet firmware runs at 230400, not the usual 115200
+VM_IP=192.168.178.64   # only the HA VM may connect; keep its IP fixed with a DHCP reservation
+dev=$(ls /dev/cu.usbserial-* 2>/dev/null | head -1 || true)
+if [ -z "$dev" ]; then echo "dongle not plugged in"; sleep 10; exit 1; fi
+exec socat TCP-LISTEN:$PORT,reuseaddr,nodelay,range=$VM_IP/32 "FILE:$dev,raw,echo=0,ispeed=$BAUD,ospeed=$BAUD"
